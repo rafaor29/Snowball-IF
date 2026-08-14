@@ -10,13 +10,15 @@ import {
   Plus,
   Upload,
   Download,
-  Settings
+  Settings,
+  ReceiptText
 } from 'lucide-react';
 
 const Sidebar = ({ onAddTransaction, onImportCsv, onExportData, onOpenSettings }) => {
   const navItems = [
     { to: "/", icon: <LayoutDashboard size={20} />, label: "Dashboard", exact: true },
     { to: "/holdings", icon: <Briefcase size={20} />, label: "Holdings" },
+    { to: "/transactions", icon: <ReceiptText size={20} />, label: "Transactions" },
     { to: "/sectors", icon: <PieChart size={20} />, label: "Sectors" },
     { to: "/dividends", icon: <Coins size={20} />, label: "Dividends" },
     { to: "/find-the-dip", icon: <TrendingDown size={20} />, label: "Find the Dip" },

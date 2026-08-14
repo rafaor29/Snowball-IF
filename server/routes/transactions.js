@@ -6,6 +6,8 @@ const { toFmpTicker } = require('../services/tickerMapping');
 const multer = require('multer');
 const upload = multer({ dest: '/tmp/' });
 
+const marketData = require('../services/marketData');
+
 // GET /api/transactions — List all transactions with optional filters
 router.get('/', (req, res) => {
     try {
@@ -37,7 +39,22 @@ router.get('/', (req, res) => {
 
         const stmt = db.prepare(query);
         const rows = stmt.all(...params);
-        res.json(rows);
+
+        const cacheRows = db.prepare('SELECT ticker, fmp_ticker, name FROM stocks_cache').all();
+        const nameMap = {};
+        cacheRows.forEach(r => {
+            if (r.ticker && r.name) nameMap[r.ticker] = r.name;
+            if (r.fmp_ticker && r.name) nameMap[r.fmp_ticker] = r.name;
+        });
+
+        const enrichedRows = rows.map(t => {
+            const baseTicker = (t.fmp_ticker || t.ticker || '').split('.')[0];
+            const known = marketData.KNOWN_SECTORS?.[t.fmp_ticker] || marketData.KNOWN_SECTORS?.[t.ticker] || marketData.KNOWN_SECTORS?.[baseTicker];
+            const name = nameMap[t.fmp_ticker] || nameMap[t.ticker] || known?.name || t.ticker;
+            return { ...t, name };
+        });
+
+        res.json(enrichedRows);
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

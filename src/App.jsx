@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Holdings from './pages/Holdings';
+import Transactions from './pages/Transactions';
 import Sectors from './pages/Sectors';
 import Dividends from './pages/Dividends';
 import FindTheDip from './pages/FindTheDip';
@@ -37,6 +38,7 @@ function App() {
             <Routes>
               <Route path="/" element={<Dashboard key={refreshKey} />} />
               <Route path="/holdings" element={<Holdings key={refreshKey} onAddTransaction={() => setShowTransactionModal(true)} />} />
+              <Route path="/transactions" element={<Transactions key={refreshKey} onDataChange={handleDataChange} />} />
               <Route path="/sectors" element={<Sectors key={refreshKey} />} />
               <Route path="/dividends" element={<Dividends key={refreshKey} />} />
               <Route path="/find-the-dip" element={<FindTheDip key={refreshKey} />} />
