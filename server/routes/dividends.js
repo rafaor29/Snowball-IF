@@ -67,6 +67,62 @@ router.post('/inject', (req, res) => {
     }
 });
 
+// POST /api/dividends/resync — Delete all auto-injected dividends and re-detect/re-inject
+router.post('/resync', async (req, res) => {
+    try {
+        // 1. Delete all auto-injected dividend transactions
+        const deleteStmt = db.prepare(`
+            DELETE FROM transactions 
+            WHERE event_type IN ('DIVIDEND', 'STOCK_AS_DIVIDEND') 
+            AND notes LIKE '%Auto-injected%'
+        `);
+        const deleteResult = deleteStmt.run();
+        const deletedCount = deleteResult.changes;
+
+        // 2. Re-detect missing dividends (which will now be all of them)
+        const { missingDividends } = await detectMissingDividends();
+
+        // 3. Re-inject with corrected amounts
+        let injectedCount = 0;
+        if (missingDividends.length > 0) {
+            const insertStmt = db.prepare(`
+                INSERT INTO transactions 
+                (event_type, date, ticker, fmp_ticker, price, quantity, currency, fee_tax, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+
+            const transaction = db.transaction((rows) => {
+                for (const item of rows) {
+                    const eventType = item.event_type || 'DIVIDEND';
+                    const date = item.payment_date || item.ex_date;
+                    const ticker = item.ticker;
+                    const fmpTicker = item.fmp_ticker || toFmpTicker(ticker);
+                    const price = parseFloat(item.dividend_per_share) || 0;
+                    const quantity = parseFloat(item.shares_held) || 0;
+                    const currency = item.currency || 'EUR';
+                    const feeTax = parseFloat(item.estimated_tax) || 0;
+                    const notes = `Auto-injected DIVIDEND corporate dividend`;
+
+                    insertStmt.run(eventType, date, ticker, fmpTicker, price, quantity, currency, feeTax, notes);
+                    injectedCount++;
+                }
+            });
+
+            transaction(missingDividends);
+        }
+
+        res.json({ 
+            status: 'success', 
+            deletedCount, 
+            injectedCount,
+            message: `Removed ${deletedCount} old records, re-injected ${injectedCount} with corrected amounts.`
+        });
+    } catch (e) {
+        console.error('Error resyncing dividends:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // GET /api/dividends/breakdown — Monthly & Yearly dividend totals per stock and overall
 router.get('/breakdown', async (req, res) => {
     try {
@@ -82,20 +138,6 @@ router.get('/breakdown', async (req, res) => {
                 overallTotalEur: 0,
                 yoyDividendGrowthPct: 0
             });
-        }
-
-        const rates = await currencyService.getCurrentRates();
-        rates['EUR'] = 1;
-        if (rates['GBP']) {
-            rates['GBp'] = rates['GBP'] / 100;
-            rates['GBX'] = rates['GBP'] / 100;
-        }
-
-        // Group transactions by ticker for holding checks
-        const txByTicker = {};
-        for (const tx of transactions) {
-            if (!txByTicker[tx.ticker]) txByTicker[tx.ticker] = [];
-            txByTicker[tx.ticker].push(tx);
         }
 
         // Cache stock names / profiles
@@ -114,6 +156,9 @@ router.get('/breakdown', async (req, res) => {
         const byYearTickerMonth = {}; // { '2024': { 'SAN.MC': { name, 1: 0, ..., total: 100 } } }
         let overallTotalEur = 0;
 
+        // FX rate cache to avoid repeated API calls for the same currency+date
+        const fxCache = {};
+
         for (const divTx of dividendTxs) {
             const ticker = divTx.ticker;
             const dt = new Date(divTx.date);
@@ -126,11 +171,48 @@ router.get('/breakdown', async (req, res) => {
             if (divTx.event_type === 'DIVIDEND') {
                 const grossVal = (divTx.quantity * divTx.price);
                 const netVal = grossVal - (divTx.fee_tax || 0);
-                const rate = rates[divTx.currency] || 1;
+
+                // Use historical FX rate for the dividend payment date
+                let rate = 1;
+                const currency = divTx.currency || 'EUR';
+                if (currency !== 'EUR') {
+                    // Handle GBp/GBX: convert to GBP first
+                    let baseCurrency = currency;
+                    let penceMultiplier = 1;
+                    if (currency === 'GBp' || currency === 'GBX') {
+                        baseCurrency = 'GBP';
+                        penceMultiplier = 0.01; // pence to pounds
+                    }
+                    const cacheKey = `${baseCurrency}_${divTx.date}`;
+                    if (fxCache[cacheKey] !== undefined) {
+                        rate = fxCache[cacheKey] * penceMultiplier;
+                    } else {
+                        const baseRate = await currencyService.getExchangeRate(baseCurrency, 'EUR', divTx.date);
+                        fxCache[cacheKey] = baseRate;
+                        rate = baseRate * penceMultiplier;
+                    }
+                }
                 amountEur = netVal * rate;
             } else if (divTx.event_type === 'STOCK_AS_DIVIDEND') {
                 // Scrip dividend stock addition — if fee_tax > 0 count fee tax or market value
-                const rate = rates[divTx.currency] || 1;
+                let rate = 1;
+                const currency = divTx.currency || 'EUR';
+                if (currency !== 'EUR') {
+                    let baseCurrency = currency;
+                    let penceMultiplier = 1;
+                    if (currency === 'GBp' || currency === 'GBX') {
+                        baseCurrency = 'GBP';
+                        penceMultiplier = 0.01;
+                    }
+                    const cacheKey = `${baseCurrency}_${divTx.date}`;
+                    if (fxCache[cacheKey] !== undefined) {
+                        rate = fxCache[cacheKey] * penceMultiplier;
+                    } else {
+                        const baseRate = await currencyService.getExchangeRate(baseCurrency, 'EUR', divTx.date);
+                        fxCache[cacheKey] = baseRate;
+                        rate = baseRate * penceMultiplier;
+                    }
+                }
                 amountEur = (divTx.fee_tax || 0) * rate;
             }
 
@@ -138,7 +220,24 @@ router.get('/breakdown', async (req, res) => {
             if (amountEur <= 0 && divTx.event_type === 'DIVIDEND') {
                 // If net value was calculated as <= 0, try gross if zero fee tax
                 const gross = (divTx.quantity * divTx.price);
-                const rate = rates[divTx.currency] || 1;
+                let rate = 1;
+                const currency = divTx.currency || 'EUR';
+                if (currency !== 'EUR') {
+                    let baseCurrency = currency;
+                    let penceMultiplier = 1;
+                    if (currency === 'GBp' || currency === 'GBX') {
+                        baseCurrency = 'GBP';
+                        penceMultiplier = 0.01;
+                    }
+                    const cacheKey = `${baseCurrency}_${divTx.date}`;
+                    if (fxCache[cacheKey] !== undefined) {
+                        rate = fxCache[cacheKey] * penceMultiplier;
+                    } else {
+                        const baseRate = await currencyService.getExchangeRate(baseCurrency, 'EUR', divTx.date);
+                        fxCache[cacheKey] = baseRate;
+                        rate = baseRate * penceMultiplier;
+                    }
+                }
                 amountEur = Math.round(gross * rate * 100) / 100;
             }
 

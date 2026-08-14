@@ -147,6 +147,9 @@ body {
   height: 24px;
   animation: spin 1s linear infinite;
 }
+.spin {
+  animation: spin 1s linear infinite;
+}
 .loading-container {
   display: flex;
   justify-content: center;

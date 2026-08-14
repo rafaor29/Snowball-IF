@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useApi } from '../hooks/useApi';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { formatCurrency, formatPercent, formatNumber } from '../utils/formatters';
-import { Coins, TrendingUp, Calendar, Search, CheckCircle2 } from 'lucide-react';
+import { Coins, TrendingUp, Calendar, Search, CheckCircle2, RefreshCw } from 'lucide-react';
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -11,6 +11,8 @@ const Dividends = () => {
   const [viewMode, setViewMode] = useState('matrix'); // 'matrix', 'growth', 'missing'
   const [injecting, setInjecting] = useState(false);
   const [injectMessage, setInjectMessage] = useState(null);
+  const [resyncing, setResyncing] = useState(false);
+  const [resyncMessage, setResyncMessage] = useState(null);
 
   const { data: breakdownData, loading: breakdownLoading, refetch: refetchBreakdown } = useApi('/api/dividends/breakdown');
   const { data: yoyData, loading: yoyLoading } = useApi('/api/portfolio/yoy-performance');
@@ -68,6 +70,30 @@ const Dividends = () => {
     }
   };
 
+  const handleResyncDividends = async () => {
+    if (!window.confirm('This will delete all auto-injected dividends and re-fetch them with corrected amounts. Continue?')) return;
+    setResyncing(true);
+    setResyncMessage(null);
+    try {
+      const res = await fetch('/api/dividends/resync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResyncMessage(`✅ ${data.message}`);
+        refetchBreakdown();
+        if (viewMode === 'missing') refetchMissing();
+      } else {
+        setResyncMessage(`Error: ${data.error}`);
+      }
+    } catch (e) {
+      setResyncMessage(`Error resyncing dividends: ${e.message}`);
+    } finally {
+      setResyncing(false);
+    }
+  };
+
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       return (
@@ -97,6 +123,18 @@ const Dividends = () => {
           <p className="page-subtitle">Track received dividends by month, year, and holding period window</p>
         </div>
 
+        <div className="flex items-center gap-3">
+          <button
+            className="btn btn-outline flex items-center gap-2"
+            onClick={handleResyncDividends}
+            disabled={resyncing}
+            title="Re-fetch all auto-injected dividends with corrected per-share amounts"
+            style={{ fontSize: '13px', padding: '6px 14px' }}
+          >
+            <RefreshCw size={14} className={resyncing ? 'spin' : ''} />
+            {resyncing ? 'Re-syncing...' : 'Re-sync Dividends'}
+          </button>
+
         <div className="flex gap-2 p-1" style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--border-radius-sm)' }}>
           <button
             className={`btn ${viewMode === 'matrix' ? 'btn-primary' : ''}`}
@@ -117,7 +155,15 @@ const Dividends = () => {
             <Search size={16} /> Missing Audit
           </button>
         </div>
+        </div>
       </div>
+
+      {/* Re-sync result message */}
+      {resyncMessage && (
+        <div className="mb-4 p-3 rounded-lg flex items-center gap-2" style={{ backgroundColor: 'rgba(16, 185, 129, 0.12)', color: '#10b981', fontSize: '14px' }}>
+          {resyncMessage}
+        </div>
+      )}
 
       {/* Top Summary Metrics */}
       <div className="grid mb-6" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>

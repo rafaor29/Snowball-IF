@@ -2,7 +2,7 @@ const db = require('../db/database');
 const YahooFinance = require('yahoo-finance2').default;
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
-const BASE_URL = 'https://financialmodelingprep.com/api/v3';
+const BASE_URL = 'https://financialmodelingprep.com/stable';
 
 // Sector mapping for known stocks in Spanish / US / European markets
 // Sector & Currency mapping for known stocks in Spanish / US / European markets
@@ -91,6 +91,7 @@ function getApiKey() {
 }
 
 let fmpFailing = false;
+function resetFmpFailing() { fmpFailing = false; }
 
 async function processQueue() {
     if (isProcessing || queue.length === 0) return;
@@ -171,7 +172,7 @@ async function getYahooQuote(symbol) {
 
 async function fetchQuoteLive(fmpTicker) {
     // Try FMP API if key is present and not failing
-    const data = await fetchFmp(`/quote/${fmpTicker}`);
+    const data = await fetchFmp(`/quote?symbol=${fmpTicker}`);
     if (data && data.length > 0) {
         const quote = data[0];
         try {
@@ -297,8 +298,8 @@ async function refreshAllPortfolioQuotes() {
 }
 
 async function getHistoricalPrices(fmpTicker, fromDate, toDate) {
-    const data = await fetchFmp(`/historical-price-full/${fmpTicker}?from=${fromDate}&to=${toDate}`);
-    if (data && data.historical && data.historical.length > 0) return data.historical;
+    const data = await fetchFmp(`/historical-price-eod/full?symbol=${fmpTicker}&from=${fromDate}&to=${toDate}`);
+    if (data && Array.isArray(data) && data.length > 0) return data;
 
     try {
         const queryOptions = {
@@ -325,8 +326,8 @@ async function getHistoricalPrices(fmpTicker, fromDate, toDate) {
 }
 
 async function getDividendHistory(fmpTicker) {
-    const data = await fetchFmp(`/historical-price-full/stock_dividend/${fmpTicker}`);
-    if (data && data.historical) return data.historical;
+    const data = await fetchFmp(`/dividends?symbol=${fmpTicker}`);
+    if (data && Array.isArray(data)) return data;
     return [];
 }
 
@@ -404,7 +405,7 @@ async function getProfile(fmpTicker) {
     }
 
     // 3. Fallback to FMP API if available
-    const data = await fetchFmp(`/profile/${fmpTicker}`);
+    const data = await fetchFmp(`/profile?symbol=${fmpTicker}`);
     if (data && data.length > 0) {
         const p = data[0];
         const profileCurr = p.currency === 'GBp' ? 'GBX' : (p.currency || deriveCurrency(fmpTicker));
@@ -432,5 +433,6 @@ module.exports = {
     searchTicker,
     getProfile,
     KNOWN_SECTORS,
-    getApiKey
+    getApiKey,
+    resetFmpFailing
 };

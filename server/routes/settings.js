@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
-const { getApiKey } = require('../services/marketData');
+const { getApiKey, resetFmpFailing } = require('../services/marketData');
 
 // GET /api/settings — Retrieve current settings
 router.get('/', (req, res) => {
@@ -29,7 +29,8 @@ router.post('/', (req, res) => {
             `);
             stmt.run(apiKey.trim());
 
-            // Clear cache to force fresh fetches
+            // Clear cache to force fresh fetches and reset failure flag
+            resetFmpFailing();
             db.prepare('DELETE FROM stocks_cache').run();
         }
         res.json({ status: 'saved', hasApiKey: !!apiKey });
