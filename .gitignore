@@ -5,7 +5,9 @@ node_modules/
 .env
 
 # Database
-server/db/snowball.db
+server/db/*.db
+server/db/*.db-wal
+server/db/*.db-shm
 
 # Build
 dist/
