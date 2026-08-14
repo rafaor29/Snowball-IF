@@ -9,6 +9,10 @@ server/db/*.db
 server/db/*.db-wal
 server/db/*.db-shm
 
+# User Data
+data/*.csv
+data/Transactions.csv
+
 # Build
 dist/
 
